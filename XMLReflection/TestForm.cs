@@ -23,21 +23,21 @@ namespace XMLReflection
 
         private void buttonLoad_Click(object sender, EventArgs e)
         {
-            ms._flag = false;
-            ms._age = 10;
-            ms._id = 10;
-            ms._size = 10;
-            ms._height = 10.1f;
-            ms._width = 10.2d;
-            ms._depth = 10.3m;
-            ms._character = 'a';
-            ms._pos = new Point(14, 16);
-            ms._rect = new Rectangle(10, 20, 30, 40);
+            ms.flag = false;
+            ms.age = 10;
+            ms.id = 10;
+            ms.size = 10;
+            ms.height = 10.1f;
+            ms.width = 10.2d;
+            ms.depth = 10.3m;
+            ms.character = 'a';
+            ms.pos = new Point(14, 16);
+            ms.rect = new Rectangle(10, 20, 30, 40);
 
             ms.SaveXML();
             ms.LoadXML();
 
-            Console.WriteLine(ms._depth);
+            Console.WriteLine(ms.depth);
 
         }
 

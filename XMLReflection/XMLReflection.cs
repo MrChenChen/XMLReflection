@@ -16,13 +16,34 @@ namespace XMLReflection
         public static readonly Assembly mCoreLib = Assembly.Load("mscorlib");
         public static readonly Assembly mCurrLib = Assembly.GetExecutingAssembly();
 
-        const string STRING = "S";
-        const string PRIMARY = "P";
-        const string EXTENTION = "E";
+        const int STRING = 0;
+        const int PRIMARY = 1;
+        const int EXTENTION = 2;
+
+        public string mSavePath = string.Empty;
+
+        public XMLBase()
+        {
+            mSavePath = "D:\\" + GetType().Name + ".xml";
+        }
+
+        public static int GetTypeFlag(Type t)
+        {
+            return (t == typeof(string)) ?
+                STRING
+                :
+                (t.IsPrimitive || t == typeof(decimal))
+                ?
+                PRIMARY
+                :
+                EXTENTION;
+        }
 
         public void LoadXML()
         {
-            XElement xml = XElement.Load("D:\\" + GetType().Name + ".xml");
+            if (mSavePath == string.Empty) throw new Exception("XMLBase SavePath is Empty");
+
+            XElement xml = XElement.Load(mSavePath);
 
             var member = GetType().GetFields();
 
@@ -30,34 +51,34 @@ namespace XMLReflection
             {
                 var elem = xml.Element(item.Name);
 
-                if (elem != null)
+                MethodInfo parse = null;
+
+                switch (GetTypeFlag(item.FieldType))
                 {
-                    var attrValue = elem.Attribute("Type").Value;
-
-                    var attrType = attrValue.Split('_')[0];
-
-                    if (attrValue != null)
-                    {
-                        MethodInfo parse = null;
-
-                        if (attrValue.EndsWith(STRING))
+                    case STRING:
                         {
                             item.SetValue(this, elem.Value);
+                            break;
                         }
-                        else if (attrValue.EndsWith(EXTENTION))
+                    case PRIMARY:
                         {
-                            parse = mCurrLib.GetTypes().Where(x => x.Name.Contains(attrType + "_Extention")).First().GetMethod("Parse", BindingFlags.Static | BindingFlags.Public);
-
-                            item.SetValue(this, parse.Invoke(null, new object[] { null, elem.Value }));
-                        }
-                        else if (attrValue.EndsWith(PRIMARY))
-                        {
-                            parse = mCoreLib.CreateInstance("System." + attrType).GetType().GetMethod("Parse", new Type[] { typeof(string) });
+                            parse = mCoreLib.CreateInstance("System." + item.FieldType.Name).GetType().GetMethod("Parse", new Type[] { typeof(string) });
 
                             item.SetValue(this, parse.Invoke(null, new object[] { elem.Value }));
+
+                            break;
                         }
-                    }
+                    case EXTENTION:
+                        {
+                            parse = mCurrLib.GetTypes().Where(x => x.Name.Contains(item.FieldType.Name + "_Extention")).First().GetMethod("Parse", BindingFlags.Static | BindingFlags.Public);
+
+                            item.SetValue(this, parse.Invoke(null, new object[] { null, elem.Value }));
+                            break;
+                        }
+                    default:
+                        break;
                 }
+
             }
         }
 
@@ -71,24 +92,9 @@ namespace XMLReflection
             {
                 if (item.IsStatic) continue;
 
-
                 XElement xe = new XElement(item.Name);
 
                 xe.SetValue(item.GetValue(this).ToString());
-
-
-                if (item.FieldType.IsPrimitive || item.FieldType == typeof(decimal))
-                {
-                    xe.SetAttributeValue("Type", item.FieldType.Name + "_" + PRIMARY);
-                }
-                else if (item.FieldType == typeof(string))
-                {
-                    xe.SetAttributeValue("Type", item.FieldType.Name + "_" + STRING);
-                }
-                else
-                {
-                    xe.SetAttributeValue("Type", item.FieldType.Name + "_" + EXTENTION);
-                }
 
                 xml.Add(xe);
 
@@ -102,34 +108,41 @@ namespace XMLReflection
 
     public class MySetting : XMLBase
     {
+        //string
+
+        public string name = string.Empty;
+
+
         //基元类型
-        public bool _flag = true;
 
-        public byte _age = 0;
+        public bool flag = true;
 
-        public int _id = 0;
+        public byte age = 0;
 
-        public char _character = '0';
+        public int id = 0;
 
-        public long _size = 0L;
+        public char character = '0';
 
-        public float _height = 0f;
+        public long size = 0L;
 
-        public double _width = 0d;
+        public float height = 0f;
+
+        public double width = 0d;
+
+        public decimal depth = 0m;
 
 
         //结构和类
-        public decimal _depth = 0m;
 
-        public string _name = string.Empty;
+        public Rectangle rect = new Rectangle();
 
-        public Rectangle _rect = new Rectangle();
+        public Point pos = new Point();
 
-        public Point _pos = new Point();
+        public DateTime date = DateTime.Now;
 
-        public DateTime _date = DateTime.Now;
 
     }
+
 }
 
 namespace Extention
