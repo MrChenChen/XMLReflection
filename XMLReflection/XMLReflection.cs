@@ -10,7 +10,7 @@ using System.Xml.Linq;
 namespace XMLReflection
 {
 
-    public class XMLBase
+    public class XMLBase : INotifyPropertyChanged
     {
 
         public static readonly Assembly mCoreLib = Assembly.Load("mscorlib");
@@ -18,38 +18,38 @@ namespace XMLReflection
 
         const int STRING = 0;
         const int PRIMARY = 1;
-        const int EXTENTION = 2;
+        const int CLASS = 2;
+        const int EXTENTION = 3;
 
-        public string mSavePath = string.Empty;
-
-        public XMLBase()
-        {
-            mSavePath = "D:\\" + GetType().Name + ".xml";
-        }
+        public event PropertyChangedEventHandler PropertyChanged;
 
         public static int GetTypeFlag(Type t)
         {
-            return (t == typeof(string)) ?
-                STRING
-                :
-                (t.IsPrimitive || t == typeof(decimal))
-                ?
-                PRIMARY
-                :
-                EXTENTION;
+            if (t == typeof(string))
+            {
+                return STRING;
+            }
+            else if (t.IsPrimitive || t == typeof(decimal))
+            {
+                return PRIMARY;
+            }
+            else if (t.IsSubclassOf(typeof(XMLBase)))
+            {
+                return CLASS;
+            }
+            else
+            {
+                return EXTENTION;
+            }
         }
 
-        public void LoadXML()
+        public void SetXML(object _object, XElement _elem)
         {
-            if (mSavePath == string.Empty) throw new Exception("XMLBase SavePath is Empty");
-
-            XElement xml = XElement.Load(mSavePath);
-
-            var member = GetType().GetFields();
+            var member = _object.GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
 
             foreach (var item in member)
             {
-                var elem = xml.Element(item.Name);
+                var elem = _elem.Element(item.Name);
 
                 MethodInfo parse = null;
 
@@ -57,51 +57,92 @@ namespace XMLReflection
                 {
                     case STRING:
                         {
-                            item.SetValue(this, elem.Value);
+                            item.SetValue(_object, elem.Value);
                             break;
                         }
                     case PRIMARY:
                         {
-                            parse = mCoreLib.CreateInstance("System." + item.FieldType.Name).GetType().GetMethod("Parse", new Type[] { typeof(string) });
+                            parse = mCoreLib.CreateInstance("System." + item.FieldType.Name)
+                                .GetType().GetMethod("Parse", new[] { typeof(string) });
 
-                            item.SetValue(this, parse.Invoke(null, new object[] { elem.Value }));
+                            item.SetValue(_object, parse.Invoke(null, new object[] { elem.Value }));
+
+                            break;
+                        }
+                    case CLASS:
+                        {
+                            var currField = item.GetValue(_object);
+
+                            SetXML(currField, elem);
 
                             break;
                         }
                     case EXTENTION:
                         {
-                            parse = mCurrLib.GetTypes().Where(x => x.Name.Contains(item.FieldType.Name + "_Extention")).First().GetMethod("Parse", BindingFlags.Static | BindingFlags.Public);
+                            parse = mCurrLib.GetTypes()
+                                .Where(x => x.Name.Contains(item.FieldType.Name + "_Extention"))
+                                .First().GetMethod("Parse", BindingFlags.Static | BindingFlags.Public);
 
-                            item.SetValue(this, parse.Invoke(null, new object[] { null, elem.Value }));
+                            if (parse == null) return;
+
+                            item.SetValue(_object, parse.Invoke(null, new object[] { null, elem.Value }));
+
                             break;
                         }
                     default:
                         break;
                 }
-
             }
+        }
+
+        public XElement GetXML()
+        {
+            XElement xml = new XElement(GetType().Name);
+
+            var mem = GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
+
+            foreach (var item in mem)
+            {
+                XElement xe = new XElement(item.Name);
+
+                if (item.IsStatic) continue;
+
+                var itemValue = item.GetValue(this);
+
+                if (itemValue is XMLBase)
+                {
+                    xe = (itemValue as XMLBase).GetXML();
+
+                    xe.Name = item.Name;
+                }
+                else
+                {
+                    xe.SetValue(itemValue.ToString());
+                }
+
+                xml.Add(xe);
+            }
+
+            return xml;
+        }
+
+        public void LoadXML()
+        {
+            XElement xml = XElement.Load(GetType().Name + ".xml");
+
+            SetXML(this, xml);
         }
 
         public void SaveXML()
         {
-            XElement xml = new XElement(GetType().Name);
+            var temp = GetXML();
 
-            var mem = GetType().GetFields();
+            temp.Save(GetType().Name + ".xml");
+        }
 
-            foreach (var item in mem)
-            {
-                if (item.IsStatic) continue;
-
-                XElement xe = new XElement(item.Name);
-
-                xe.SetValue(item.GetValue(this).ToString());
-
-                xml.Add(xe);
-
-            }
-
-            xml.Save("D:\\" + GetType().Name + ".xml");
-
+        protected void OnPropertyChanged(string name)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         }
 
     }
