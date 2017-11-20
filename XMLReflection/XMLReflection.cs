@@ -23,6 +23,22 @@ namespace XMLReflection
 
         public event PropertyChangedEventHandler PropertyChanged;
 
+        private PropertyInfo[] mProperties = null;
+
+        private Dictionary<int, Action> mDictionary = new Dictionary<int, Action>();
+
+        public XMLBase()
+        {
+            Init_NotifyChanged();
+        }
+
+        private void Init_NotifyChanged()
+        {
+            mProperties = GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+            _NotifyDataSetChanged(this);
+        }
+
         public static int GetTypeFlag(Type t)
         {
             if (t == typeof(string))
@@ -131,6 +147,8 @@ namespace XMLReflection
             XElement xml = XElement.Load(GetType().Name + ".xml");
 
             SetXML(this, xml);
+
+            NotifyDataSetChanged();
         }
 
         public void SaveXML()
@@ -140,10 +158,41 @@ namespace XMLReflection
             temp.Save(GetType().Name + ".xml");
         }
 
-        protected void OnPropertyChanged(string name)
+        private void _NotifyDataSetChanged(object _this)
         {
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+            foreach (var item in mProperties)
+            {
+                if (mDictionary.ContainsKey(item.MetadataToken))
+                {
+                    mDictionary[item.MetadataToken].Invoke();
+                }
+                else
+                {
+                    if (item.PropertyType.IsSubclassOf(typeof(XMLBase)))
+                    {
+                        mDictionary.Add(item.MetadataToken, () =>
+                        {
+                            var temp = (item.GetValue(_this, null) as XMLBase);
+
+                            temp?._NotifyDataSetChanged(temp);
+                        });
+                    }
+                    else
+                    {
+                        mDictionary.Add(item.MetadataToken, () =>
+                        {
+                            PropertyChanged?.Invoke(_this, new PropertyChangedEventArgs(item.Name));
+                        });
+                    }
+                }
+            }
         }
+
+        public void NotifyDataSetChanged()
+        {
+            _NotifyDataSetChanged(this);
+        }
+
 
     }
 
