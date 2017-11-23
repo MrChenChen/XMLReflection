@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -16,10 +16,14 @@ namespace XMLReflection
         public static readonly Assembly mCoreLib = Assembly.Load("mscorlib");
         public static readonly Assembly mCurrLib = Assembly.GetExecutingAssembly();
 
-        const int STRING = 0;
-        const int PRIMARY = 1;
-        const int CLASS = 2;
-        const int EXTENTION = 3;
+        const string IENUMERABLE = "IList";
+        const BindingFlags NonPublicInstance = BindingFlags.NonPublic | BindingFlags.Instance;
+        const BindingFlags PublicInstance = BindingFlags.Public | BindingFlags.Instance;
+
+        public enum SupportEnum
+        {
+            STRING, PRIMARY, CLASS, STRUCT, ENUMERABLE, OTHER
+        }
 
         public event PropertyChangedEventHandler PropertyChanged;
 
@@ -29,136 +33,253 @@ namespace XMLReflection
 
         public XMLBase()
         {
-            Init_NotifyChanged();
+            mProperties = GetType().GetProperties(PublicInstance);
+
+            if (mProperties.Length > 0) _NotifyDataSetChanged(this);
         }
 
-        private void Init_NotifyChanged()
-        {
-            mProperties = GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
-
-            _NotifyDataSetChanged(this);
-        }
-
-        public static int GetTypeFlag(Type t)
+        private static SupportEnum GetTypeFlag(Type t)
         {
             if (t == typeof(string))
             {
-                return STRING;
+                return SupportEnum.STRING;
             }
             else if (t.IsPrimitive || t == typeof(decimal))
             {
-                return PRIMARY;
+                return SupportEnum.PRIMARY;
             }
             else if (t.IsSubclassOf(typeof(XMLBase)))
             {
-                return CLASS;
+                return SupportEnum.CLASS;
+            }
+            else if (t.IsSubclassOf(typeof(ValueType)))
+            {
+                return SupportEnum.STRUCT;
+            }
+            else if (t.GetInterface(IENUMERABLE) != null)
+            {
+                return SupportEnum.ENUMERABLE;
             }
             else
             {
-                return EXTENTION;
+                return SupportEnum.OTHER;
             }
         }
 
-        public void SetXML(object _object, XElement _elem)
+
+        string HandleName(object _object)
         {
-            var member = _object.GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
+            var type = _object.GetType();
 
-            foreach (var item in member)
+            var orgin_name = _object.GetType().Name;
+
+            var result_name = orgin_name;
+
+            if (_object is System.Collections.IList)
             {
-                var elem = _elem.Element(item.Name);
+                var count = (_object as System.Collections.IList).Count;
 
-                MethodInfo parse = null;
-
-                switch (GetTypeFlag(item.FieldType))
+                if (orgin_name.Contains("`"))
                 {
-                    case STRING:
-                        {
-                            item.SetValue(_object, elem.Value);
-                            break;
-                        }
-                    case PRIMARY:
-                        {
-                            parse = mCoreLib.CreateInstance("System." + item.FieldType.Name)
-                                .GetType().GetMethod("Parse", new[] { typeof(string) });
-
-                            item.SetValue(_object, parse.Invoke(null, new object[] { elem.Value }));
-
-                            break;
-                        }
-                    case CLASS:
-                        {
-                            var currField = item.GetValue(_object);
-
-                            SetXML(currField, elem);
-
-                            break;
-                        }
-                    case EXTENTION:
-                        {
-                            parse = mCurrLib.GetTypes()
-                                .Where(x => x.Name.Contains(item.FieldType.Name + "_Extention"))
-                                .First().GetMethod("Parse", BindingFlags.Static | BindingFlags.Public);
-
-                            if (parse == null) return;
-
-                            item.SetValue(_object, parse.Invoke(null, new object[] { null, elem.Value }));
-
-                            break;
-                        }
-                    default:
-                        break;
+                    result_name = orgin_name.Split('`')[0] + "_" + count;
+                }
+                else if (orgin_name.Contains("["))
+                {
+                    result_name = orgin_name.Split('[')[0] + "_" + count;
                 }
             }
+
+            return result_name;
         }
 
-        public XElement GetXML()
+        protected XElement GetXMLIEnumerable(object _object)
         {
-            XElement xml = new XElement(GetType().Name);
 
-            var mem = GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance);
+            XElement xml = new XElement(HandleName(_object));
 
-            foreach (var item in mem)
+            var type = GetTypeFlag(_object.GetType());
+
+            if (type == SupportEnum.ENUMERABLE)
             {
-                XElement xe = new XElement(item.Name);
+                var list = _object as System.Collections.IEnumerable;
 
-                if (item.IsStatic) continue;
-
-                var itemValue = item.GetValue(this);
-
-                if (itemValue is XMLBase)
+                foreach (var temp in list)
                 {
-                    xe = (itemValue as XMLBase).GetXML();
-
-                    xe.Name = item.Name;
+                    xml.Add(GetXMLIEnumerable(temp));
                 }
-                else
-                {
-                    xe.SetValue(itemValue.ToString());
-                }
-
-                xml.Add(xe);
+            }
+            else
+            {
+                xml = GetXML(_object);
+                xml.Name = _object.GetType().Name;
             }
 
             return xml;
         }
 
-        public void LoadXML()
+        protected object SetXML(object _object, XElement _elem)
         {
-            XElement xml = XElement.Load(GetType().Name + ".xml");
+            if (_object == null) return null;
+
+            if (_elem == null) return _object;
+
+            var type = GetTypeFlag((_object as Type) ?? _object.GetType());
+
+            if (type == SupportEnum.STRING)
+            {
+                _object = _elem.Value;
+            }
+            else if (type == SupportEnum.PRIMARY)
+            {
+                MethodInfo parse;
+
+                if (_object is Type)
+                {
+                    parse = mCoreLib.CreateInstance((_object as Type).ToString()).GetType().GetMethod("Parse", new[] { typeof(string) });
+                }
+                else
+                {
+                    parse = mCoreLib.CreateInstance(_object.GetType().ToString()).GetType().GetMethod("Parse", new[] { typeof(string) });
+                }
+
+                _object = parse.Invoke(null, new object[] { _elem.Value });
+            }
+            else if (type == SupportEnum.CLASS || type == SupportEnum.STRUCT || type == SupportEnum.OTHER)
+            {
+                var mem = _object.GetType().GetFields(NonPublicInstance | PublicInstance);
+
+                foreach (var item in mem)
+                {
+                    var item_value = item.GetValue(_object);
+
+                    item.SetValue(_object, SetXML(item_value, _elem.Element(item.Name)));
+                }
+            }
+            else if (type == SupportEnum.ENUMERABLE)
+            {
+                var list = _object as System.Collections.IList;
+
+                Type list_type = _object.GetType().GetElementType();
+
+                var ele_type = GetTypeFlag(list_type);
+
+                list.Clear();
+
+                int index = 0;
+
+                foreach (var ele in _elem.Elements())
+                {
+                    object obj = null;
+
+                    if (ele_type == SupportEnum.ENUMERABLE)
+                    {
+                        obj = Activator.CreateInstance(list_type);
+                    }
+                    else if (ele_type == SupportEnum.STRING)
+                    {
+                        obj = string.Empty;
+                    }
+                    else if (list is Array)
+                    {
+                        var rank = (list as Array).Rank;
+
+                        if (rank == 1)
+                        {
+                            obj = Activator.CreateInstance(list_type);
+
+                            list[index++] = SetXML(obj, ele);
+                        }
+                        else
+                        {
+                            throw new NotImplementedException("Did not implement multi-dimensional array");
+                        }
+                    }
+                    else
+                    {
+                        obj = Activator.CreateInstance(list_type);
+
+                        list.Add(SetXML(obj, ele));
+                    }
+                }
+
+                _object = list;
+            }
+
+            return _object;
+        }
+
+        protected XElement GetXML(object _object)
+        {
+            XElement xml = new XElement(GetType().Name);
+
+            var type = GetTypeFlag(_object.GetType());
+
+            if (type == SupportEnum.STRING || type == SupportEnum.PRIMARY)
+            {
+                xml.SetValue(_object.ToString());
+            }
+            else
+            {
+                var mem = _object.GetType().GetFields(NonPublicInstance | PublicInstance);
+
+                foreach (var item in mem)
+                {
+                    XElement xe = new XElement(item.Name);
+
+                    var itemValue = item.GetValue(_object);
+
+                    if (itemValue == null) continue;
+
+                    var item_type = GetTypeFlag(itemValue.GetType());
+
+                    if (item_type == SupportEnum.CLASS)
+                    {
+                        xe = (itemValue as XMLBase).GetXML(itemValue);
+                    }
+                    else if (item_type == SupportEnum.STRUCT)
+                    {
+                        xe = GetXML(itemValue);
+                    }
+                    else if (item_type == SupportEnum.ENUMERABLE)
+                    {
+                        xe = GetXMLIEnumerable(itemValue);
+                    }
+                    else
+                    {
+                        xe = GetXML(itemValue);
+                    }
+
+                    xe.Name = item.Name;
+
+                    xml.Add(xe);
+                }
+            }
+
+            return xml;
+        }
+
+        public void LoadXML(string filename = "")
+        {
+            XElement xml = XElement.Load((filename == "" ? GetType().Name : filename) + ".xml");
 
             SetXML(this, xml);
 
             NotifyDataSetChanged();
         }
 
-        public void SaveXML()
+        public void SaveXML(string filename = "")
         {
-            var temp = GetXML();
+            var temp = GetXML(this);
 
-            temp.Save(GetType().Name + ".xml");
+            temp.Save((filename == "" ? GetType().Name : filename) + ".xml");
         }
 
-        private void _NotifyDataSetChanged(object _this)
+        protected virtual void OnPropertyChanged(object _object, string name)
+        {
+            PropertyChanged?.Invoke(_object, new PropertyChangedEventArgs(name));
+        }
+
+        protected virtual void _NotifyDataSetChanged(object _object)
         {
             foreach (var item in mProperties)
             {
@@ -172,17 +293,17 @@ namespace XMLReflection
                     {
                         mDictionary.Add(item.MetadataToken, () =>
                         {
-                            var temp = (item.GetValue(_this, null) as XMLBase);
+                            var temp = (item.GetValue(_object, null) as XMLBase);
 
                             temp?._NotifyDataSetChanged(temp);
                         });
                     }
                     else
                     {
-                        mDictionary.Add(item.MetadataToken, () =>
+                        mDictionary.Add(item.MetadataToken, (Action)(() =>
                         {
-                            PropertyChanged?.Invoke(_this, new PropertyChangedEventArgs(item.Name));
-                        });
+                            OnPropertyChanged(_object, item.Name);
+                        }));
                     }
                 }
             }
@@ -193,8 +314,8 @@ namespace XMLReflection
             _NotifyDataSetChanged(this);
         }
 
-
     }
+    
 
     public class MySetting : XMLBase
     {
